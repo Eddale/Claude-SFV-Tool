@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -156,9 +157,33 @@ Got an article ready? Drop it in and let's make something that stops the scroll.
       const handleSend = async () => {
         if (!inputValue.trim() && !fileContent) return;
 
-        const userContent = fileContent 
-          ? `Here's my article:\n\n${fileContent}${inputValue ? `\n\n${inputValue}` : ''}`
-          : inputValue;
+        // Check if this is a PDF
+        const isPDF = fileContent && fileContent.startsWith('[PDF_BASE64]');
+        
+        let userContent;
+        if (isPDF) {
+          // For PDFs, we'll send as document to Claude API
+          const base64Data = fileContent.replace('[PDF_BASE64]', '');
+          userContent = [
+            {
+              type: "document",
+              source: {
+                type: "base64",
+                media_type: "application/pdf",
+                data: base64Data
+              }
+            },
+            {
+              type: "text",
+              text: inputValue || "Please extract the text from this PDF article and help me create video hooks for it."
+            }
+          ];
+        } else {
+          // For text files or pasted content
+          userContent = fileContent 
+            ? `Here's my article:\n\n${fileContent}${inputValue ? `\n\n${inputValue}` : ''}`
+            : inputValue;
+        }
 
         const userMessage = {
           role: 'user',
@@ -181,7 +206,13 @@ Got an article ready? Drop it in and let's make something that stops the scroll.
             .map(m => ({ role: m.role, content: m.content }));
 
           if (conversationMessages.length > 0 && conversationMessages[0].role === 'user') {
-            conversationMessages[0].content = `[INSTRUCTIONS FOR THIS CONVERSATION]\n${SYSTEM_PROMPT}\n[END INSTRUCTIONS]\n\nUser request:\n${conversationMessages[0].content}`;
+            // Only add system prompt if content is a string (not PDF array)
+            if (typeof conversationMessages[0].content === 'string') {
+              conversationMessages[0].content = `[INSTRUCTIONS FOR THIS CONVERSATION]\n${SYSTEM_PROMPT}\n[END INSTRUCTIONS]\n\nUser request:\n${conversationMessages[0].content}`;
+            } else {
+              // For PDF, add system prompt to the text block
+              conversationMessages[0].content[1].text = `[INSTRUCTIONS FOR THIS CONVERSATION]\n${SYSTEM_PROMPT}\n[END INSTRUCTIONS]\n\n${conversationMessages[0].content[1].text}`;
+            }
           }
 
           // This will be replaced by your backend proxy
@@ -219,8 +250,19 @@ Got an article ready? Drop it in and let's make something that stops the scroll.
         if (file) {
           setUploadedFile({ name: file.name });
           const reader = new FileReader();
-          reader.onload = (e) => setFileContent(e.target.result);
-          reader.readAsText(file);
+          
+          // For PDFs, read as base64 and let Claude extract text
+          if (file.type === 'application/pdf') {
+            reader.onload = (e) => {
+              const base64 = e.target.result.split(',')[1];
+              setFileContent(`[PDF_BASE64]${base64}`);
+            };
+            reader.readAsDataURL(file);
+          } else {
+            // For text files, read as text
+            reader.onload = (e) => setFileContent(e.target.result);
+            reader.readAsText(file);
+          }
         }
       };
 
